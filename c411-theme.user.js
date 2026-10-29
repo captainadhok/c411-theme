@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         c411-theme
 // @namespace    https://github.com/CaptnAdhok/send2seed
-// @version      1.1.0
+// @version      1.2.0
 // @description  Thème de couleur pour C411 (accent + fond) et désactivation du thème Halloween.
 // @author       CaptnAdhok
 // @match        https://*.c411.org/*
@@ -291,57 +291,69 @@
   // Thème Halloween (classe .theme-halloween posée par le site)
   // ============================================================
 
+  const LOGO_H = 'logo-halloween-md.webp';
+  const LOGO_N = 'logo-md.png';
   let halloweenOffStyleEl = null;
   let halloweenBtn = null;
+  let hwApplying = false;
 
   function isHalloweenOff() {
     return !!GM_getValue('halloweenOff', false);
   }
 
-  const LOGO_H = 'logo-halloween-md.webp';
-  const LOGO_N = 'logo-md.png';
-
   function logoSwapToNormal(img) {
-    const cur = img.getAttribute('src') || img.src || '';
+    const cur = img.getAttribute('src') || '';
     if (cur.includes(LOGO_H)) {
       img.setAttribute('src', cur.replace(LOGO_H, LOGO_N));
+      const ss = img.getAttribute('srcset');
+      if (ss) img.setAttribute('srcset', ss.split(',').map((p) => p.trim().replace(LOGO_H, LOGO_N)).join(', '));
     }
     img.classList.remove('halloween-logo');
-    const ss = img.getAttribute('srcset');
-    if (ss) img.setAttribute('srcset', ss.split(',').map(p => p.trim().replace(LOGO_H, LOGO_N)).join(', '));
   }
 
   function logoSwapToHalloween(img) {
-    const cur = img.getAttribute('src') || img.src || '';
+    const cur = img.getAttribute('src') || '';
     if (cur.includes('halloween')) return;
-    img.setAttribute('src', cur.replace(/logo-(md|sm|lg)\.(png|webp)/, LOGO_H));
+    if (!/logo-/.test(cur)) return;
+    img.setAttribute('src', cur.replace(/logo-[a-z0-9]*\.(png|webp|svg)/, LOGO_H));
     img.classList.add('halloween-logo');
-    const ss = img.getAttribute('srcset');
-    if (ss) img.setAttribute('srcset', ss.split(',').map(p => p.trim().replace(/logo-(md|sm|lg)\.(png|webp)/, LOGO_H)).join(', '));
+  }
+
+  // État réel du DOM : faut-il retirer le thème ?
+  function hwNeedsFix() {
+    if (document.documentElement.classList.contains('theme-halloween')) return true;
+    if (document.querySelector('img[src*="' + LOGO_H + '"]')) return true;
+    if (document.querySelector('.hw-decor')) return true;
+    return false;
   }
 
   function applyHalloweenOff(off) {
+    if (hwApplying) return;
     const html = document.documentElement;
     if (!html) return;
-    if (off) {
-      html.classList.remove('theme-halloween');
-      document.querySelectorAll('img.halloween-logo, img[src*="' + LOGO_H + '"]').forEach(logoSwapToNormal);
-      if (!halloweenOffStyleEl) {
-        halloweenOffStyleEl = document.createElement('style');
-        halloweenOffStyleEl.id = 'send2seed-hwoff';
-        halloweenOffStyleEl.textContent =
-          '.theme-halloween .hw-decor { display: none !important; } ' +
-          '.hw-decor { display: none !important; } ' +
-          'img.halloween-logo { filter: none !important; }';
-        (document.head || document.documentElement).appendChild(halloweenOffStyleEl);
+    if (off && !hwNeedsFix()) return; // rien à faire → pas de mutation inutile
+    hwApplying = true;
+    try {
+      if (off) {
+        html.classList.remove('theme-halloween');
+        document.querySelectorAll('img[src*="' + LOGO_H + '"]').forEach(logoSwapToNormal);
+        document.querySelectorAll('img.halloween-logo').forEach(logoSwapToNormal);
+        if (!halloweenOffStyleEl) {
+          halloweenOffStyleEl = document.createElement('style');
+          halloweenOffStyleEl.id = 'send2seed-hwoff';
+          halloweenOffStyleEl.textContent =
+            '.theme-halloween .hw-decor { display: none !important; } ' +
+            '.hw-decor { display: none !important; } ' +
+            'img.halloween-logo { filter: none !important; }';
+          (document.head || document.documentElement).appendChild(halloweenOffStyleEl);
+        }
+      } else {
+        if (halloweenOffStyleEl) { halloweenOffStyleEl.remove(); halloweenOffStyleEl = null; }
+        if (!html.classList.contains('theme-halloween')) html.classList.add('theme-halloween');
+        document.querySelectorAll('header img, a[href="/"] img').forEach(logoSwapToHalloween);
       }
-    } else {
-      if (halloweenOffStyleEl) { halloweenOffStyleEl.remove(); halloweenOffStyleEl = null; }
-      if (!html.classList.contains('theme-halloween')) html.classList.add('theme-halloween');
-      document.querySelectorAll('header img, a[href="/"] img').forEach((img) => {
-        const cur = img.getAttribute('src') || img.src || '';
-        if (cur.includes('logo') && !cur.includes('halloween')) logoSwapToHalloween(img);
-      });
+    } finally {
+      hwApplying = false;
     }
     if (halloweenBtn) {
       halloweenBtn.style.opacity = off ? '.5' : '1';
@@ -362,45 +374,32 @@
       if (document.documentElement) run();
       window.addEventListener('DOMContentLoaded', run, { once: true });
       window.addEventListener('load', run, { once: true });
-      [1000, 2500, 5000, 8000].forEach((d) => setTimeout(run, d));
+      [1000, 2500, 5000].forEach((d) => setTimeout(run, d));
     }
-    const mo = new MutationObserver((muts) => {
-      if (!isHalloweenOff()) return;
-      for (const mu of muts) {
-        if (mu.type === 'attributes') {
-          if (mu.attributeName === 'src' && mu.target.tagName === 'IMG') {
-            const src = mu.target.getAttribute('src') || mu.target.src || '';
-            if (src.includes(LOGO_H)) { applyHalloweenOff(true); return; }
-            continue;
-          }
-          applyHalloweenOff(true);
-          return;
-        }
-        for (const n of mu.addedNodes) {
-          if (n.nodeType !== 1) continue;
-          const isDecor = n.classList && (n.classList.contains('hw-decor') || n.querySelector?.('.hw-decor'));
-          const isLogo = n.matches?.('img[src*="' + LOGO_H + '"]') || n.querySelector?.('img[src*="' + LOGO_H + '"]');
-          if (isDecor || isLogo || n.classList?.contains('halloween-logo')) {
-            applyHalloweenOff(true);
-            return;
-          }
-        }
-      }
+
+    // Observer avec garde anti-boucle :
+    // - on n'agit que si le thème doit vraiment être retiré (hwNeedsFix)
+    // - pendant l'action (hwApplying), l'observer s'ignore
+    // - debounce 80 ms pour grouper les rafales de mutations
+    let hwTimer = null;
+    const mo = new MutationObserver(() => {
+      if (!isHalloweenOff() || hwApplying) return;
+      if (!hwNeedsFix()) return;
+      if (hwTimer) return;
+      hwTimer = setTimeout(() => {
+        hwTimer = null;
+        if (isHalloweenOff() && !hwApplying && hwNeedsFix()) applyHalloweenOff(true);
+      }, 80);
     });
     const start = () => {
-      if (document.documentElement) mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-      const body = document.body;
-      if (body) {
-        mo.observe(body, { childList: true, subtree: true });
-        mo.observe(body, { attributes: true, attributeFilter: ['src', 'class'], subtree: true });
+      if (!document.body) {
+        window.addEventListener('DOMContentLoaded', start, { once: true });
+        return;
       }
-      else window.addEventListener('DOMContentLoaded', () => {
-        mo.observe(document.body, { childList: true, subtree: true });
-        mo.observe(document.body, { attributes: true, attributeFilter: ['src', 'class'], subtree: true });
-      }, { once: true });
+      mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+      mo.observe(document.body, { childList: true, subtree: true });
     };
-    if (document.body || document.documentElement) start();
-    else window.addEventListener('DOMContentLoaded', start, { once: true });
+    start();
   }
 
   // ============================================================
